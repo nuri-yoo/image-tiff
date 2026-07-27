@@ -671,6 +671,82 @@ fn test_too_many_value_bytes() {
     }
 }
 
+/// Tag values must be budgeted by `ifd_value_size`, not `decoding_buffer_size`.
+///
+/// `decoding_buffer_size` bounds the decoded image data, and callers size it
+/// accordingly: the `image` crate sets it to exactly the decoded image's byte
+/// size. When tag-value reads are charged against that budget instead of
+/// `ifd_value_size`, any tag larger than the image itself — a small photo
+/// carrying a normal ICC profile — fails with `LimitsExceeded`, which callers
+/// like `image`'s `icc_profile()` swallow into a silent `None`.
+#[test]
+fn test_tag_value_budgeted_by_ifd_value_size() {
+    use tiff::encoder::{colortype, TiffEncoder};
+    use tiff::tags::Tag;
+
+    const WIDTH: u32 = 8;
+    const HEIGHT: u32 = 8;
+    const IMAGE_BYTES: usize = (WIDTH * HEIGHT * 3) as usize;
+
+    // A tiny RGB8 image carrying an ICC profile much larger than the image data.
+    let icc: Vec<u8> = (0..16 * 1024).map(|i| i as u8).collect();
+    let mut file = Cursor::new(Vec::new());
+    {
+        let mut tiff = TiffEncoder::new(&mut file).unwrap();
+        let mut image = tiff.new_image::<colortype::RGB8>(WIDTH, HEIGHT).unwrap();
+        image
+            .encoder()
+            .write_tag(Tag::IccProfile, &icc[..])
+            .unwrap();
+        image.write_data(&[0u8; IMAGE_BYTES]).unwrap();
+    }
+
+    // decoding_buffer_size covers exactly the image data (the tightest bound a
+    // caller can pick); ifd_value_size keeps its 1 MiB default, which allows
+    // the profile.
+    let mut limits = tiff::decoder::Limits::default();
+    limits.decoding_buffer_size = IMAGE_BYTES;
+
+    file.set_position(0);
+    let mut decoder = Decoder::open(&mut file).unwrap().with_limits(limits);
+    decoder.next_image().unwrap();
+    let read_back = decoder
+        .current_ifd()
+        .get_tag_u8_vec(Tag::IccProfile)
+        .expect("tag value within ifd_value_size must not be refused by decoding_buffer_size");
+    assert_eq!(read_back, icc);
+
+    // The raw-bytes path is budgeted the same way.
+    let mut buf = tiff::tags::ValueBuffer::default();
+    let entry = decoder
+        .current_ifd()
+        .find_tag_buf(Tag::IccProfile, &mut buf)
+        .expect("raw tag read within ifd_value_size must not be refused by decoding_buffer_size");
+    assert!(entry.is_some());
+    assert_eq!(buf.as_bytes(), &icc[..]);
+
+    // The guard still holds where it belongs: an ifd_value_size smaller than
+    // the profile refuses it.
+    let mut limits = tiff::decoder::Limits::default();
+    limits.ifd_value_size = icc.len() - 1;
+
+    file.set_position(0);
+    let mut decoder = Decoder::open(&mut file).unwrap().with_limits(limits);
+    decoder.next_image().unwrap();
+    match decoder.current_ifd().get_tag_u8_vec(Tag::IccProfile) {
+        Err(tiff::TiffError::LimitsExceeded) => {}
+        unexpected => panic!("expected LimitsExceeded, got {unexpected:?}"),
+    }
+    let mut buf = tiff::tags::ValueBuffer::default();
+    match decoder
+        .current_ifd()
+        .find_tag_buf(Tag::IccProfile, &mut buf)
+    {
+        Err(tiff::TiffError::LimitsExceeded) => {}
+        unexpected => panic!("expected LimitsExceeded, got {unexpected:?}"),
+    }
+}
+
 #[test]
 fn fuzzer_testcase5() {
     let image = [

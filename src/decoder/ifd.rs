@@ -834,9 +834,12 @@ impl Entry {
     ) -> TiffResult<usize> {
         let bytes = self.type_.value_bytes(self.count())?;
 
+        // These are the raw bytes of one ifd value, which is exactly what
+        // ifd_value_size bounds (decoding_buffer_size is the budget for decoded
+        // image data, which callers may size to exactly the image).
         let allowed_length = usize::try_from(bytes)
             .ok()
-            .filter(|&n| n <= limits.decoding_buffer_size)
+            .filter(|&n| n <= limits.ifd_value_size)
             .ok_or(TiffError::LimitsExceeded)?;
 
         buf.prepare_length(allowed_length);
@@ -858,9 +861,13 @@ impl Entry {
             return Err(TiffError::LimitsExceeded);
         }
 
-        // Check in-memory Value representation against decoding_buffer_size.
+        // Check the in-memory Value representation against intermediate_buffer_size.
+        // decoding_buffer_size is the budget for decoded image data, which callers
+        // size to the image itself (possibly exactly, as `image` does); charging tag
+        // values against it refuses any tag larger than the image data, e.g. an ICC
+        // profile on a small image.
         let value_count = usize::try_from(value_count)?;
-        if value_count > limits.decoding_buffer_size / mem::size_of::<Value>() {
+        if value_count > limits.intermediate_buffer_size / mem::size_of::<Value>() {
             return Err(TiffError::LimitsExceeded);
         }
 

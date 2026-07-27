@@ -190,7 +190,8 @@ pub struct Limits {
     /// 1MiB.
     pub ifd_value_size: usize,
     /// Maximum size for intermediate buffer which may be used to limit the amount of data read per
-    /// segment even if the entire image is decoded at once.
+    /// segment even if the entire image is decoded at once. Also bounds the transient in-memory
+    /// representation built while reading a tag value.
     pub intermediate_buffer_size: usize,
 }
 

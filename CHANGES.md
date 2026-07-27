@@ -17,6 +17,14 @@ Compatibility:
   from either StripOffsets or TileOffsets with the latter taking precedence.
   This is closer to the behavior of libtiff.
 
+Fixes:
+- Tag values are no longer budgeted against `Limits::decoding_buffer_size`,
+  which callers size to the decoded image data (possibly exactly). A tag value
+  larger than the image itself, such as an ICC profile on a small image, was
+  refused with `LimitsExceeded`. Raw tag bytes are now bounded by
+  `ifd_value_size` and the transient in-memory representation by
+  `intermediate_buffer_size`.
+
 # Version 0.11.3
 
 Additions:
